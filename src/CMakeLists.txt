@@ -7,7 +7,9 @@ target_sources(mod
         version.rc
         DllMain.cpp
         Mod.cpp
+        MultiplayerCameraService.cpp
     PRIVATE FILE_SET HEADERS FILES
         Pch.h
         utilities/Helpers.h
+        MultiplayerCameraService.h
 )
