@@ -26,7 +26,7 @@ add_subdirectory(${RANGERS_SDK_PATH} rangers-sdk EXCLUDE_FROM_ALL)
 
 add_library(mod SHARED)
 target_compile_features(mod PRIVATE cxx_std_17)
-target_compile_options(mod PRIVATE $<$<CONFIG:Debug>:/ZI>)
+target_compile_options(mod PRIVATE $<$<CONFIG:Debug>:/ZI> /permissive-)
 target_compile_definitions(mod
     PRIVATE
         PROJECT_BINARY_FILENAME=$<TARGET_FILE_NAME:mod>
