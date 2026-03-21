@@ -147,12 +147,12 @@ HOOK(void, __fastcall, sub_14099DD70, 0x14099DD70, app::player::PlayerStatePlugi
 	WithPlayerIdByPlayerObject(plugin->context->playerObject, originalsub_14099DD70, plugin, a2, a3);
 }
 
-HOOK(bool, __fastcall, sub_1462027E0, 0x1462027E0, csl::math::Vector3* a1, csl::math::Vector3* a2, csl::math::Vector3* a3, CameraFrame* cameraFrame) {
-	return WithPlayerIdByCameraFrame(cameraFrame, originalsub_1462027E0, a1, a2, a3, cameraFrame);
+HOOK(bool, __fastcall, sub_1400A1160, 0x1400A1160, csl::math::Vector3* a1, csl::math::Vector3* a2, csl::math::Vector3* a3, CameraFrame* cameraFrame) {
+	return WithPlayerIdByCameraFrame(cameraFrame, originalsub_1400A1160, a1, a2, a3, cameraFrame);
 }
 
-HOOK(app::level::PlayerInformation::Unk3*, __fastcall, sub_146210630, 0x146210630, app::level::PlayerInformation::Unk3* retstr, CameraFrame* cameraFrame) {
-	return WithPlayerIdByCameraFrame(cameraFrame, originalsub_146210630, retstr, cameraFrame);
+HOOK(app::level::PlayerInformation::Unk3*, __fastcall, sub_1400A1340, 0x1400A1340, app::level::PlayerInformation::Unk3* retstr, CameraFrame* cameraFrame) {
+	return WithPlayerIdByCameraFrame(cameraFrame, originalsub_1400A1340, retstr, cameraFrame);
 }
 
 HOOK(void, __fastcall, sub_14088AC20, 0x14088AC20, app::player::Sonic* self) {
@@ -171,7 +171,7 @@ HOOK(void, __fastcall, sub_14088D0F0, 0x14088D0F0, app::player::Tails* self) {
 	WithPlayerIdByPlayerObject(self, originalsub_14088D0F0, self);
 }
 
-HOOK(void, __fastcall, InputManager_Setup, 0x150547840, hh::game::InputManager* self, hh::game::InputManager::SetupInfo& setupInfo)
+HOOK(void, __fastcall, InputManager_Setup, 0x140D46640, hh::game::InputManager* self, hh::game::InputManager::SetupInfo& setupInfo)
 {
 	setupInfo.internalPlayerInputCount = maxPlayers;
 	return originalInputManager_Setup(self, setupInfo);
@@ -190,28 +190,34 @@ app::level::PlayerInformation* GetRealPlayerInformation(app::level::LevelInfo* l
 	else return playerInfos[playerId - 1];
 }
 
-HOOK(hh::fnd::Handle<hh::fnd::Messenger>*, __fastcall, LevelInfo_GetPlayerObject, 0x14893A8E0, app::level::LevelInfo* self, hh::fnd::Handle<hh::fnd::Messenger>* retstr, char playerId) {
+HOOK(hh::fnd::Handle<app::player::Player>*, __fastcall, LevelInfo_GetPlayerObject, 0x140260410, app::level::LevelInfo* self, hh::fnd::Handle<app::player::Player>* retstr, char playerId) {
 	auto* playerInfo = GetRealPlayerInformation(self, playerId);
-	*retstr = playerInfo->playerObject.isSet ? playerInfo->playerObject.value : 0;
+	*retstr = playerInfo->playerObject.has_value() ? playerInfo->playerObject.value() : 0;
 	return retstr;
 }
 
-HOOK(char, __fastcall, LevelInfo_GetPlayerIdFromPlayerObject, 0x14893D5E0, app::level::LevelInfo* self, hh::fnd::Handle<hh::fnd::Messenger>* playerObj) {
+HOOK(char, __fastcall, LevelInfo_GetPlayerIdFromPlayerObject, 0x140260440, app::level::LevelInfo* self, hh::fnd::Handle<app::player::Player>& playerObj) {
 	for (char i = 0; i < maxPlayers; i++) {
 		auto* playerInfo = GetRealPlayerInformation(self, i);
-		if (playerInfo->playerObject.isSet && playerInfo->playerObject.value == *playerObj)
+		if (playerInfo->playerObject.has_value() && playerInfo->playerObject.value() == playerObj)
 			return i;
 	}
 	return -1;
 }
 
-HOOK(hh::fnd::Handle<hh::fnd::Messenger>, __fastcall, CameraService_GetCameraFrame, 0x14648B710, hh::game::GameManager* gameMgr, int idx)
+HOOK(hh::fnd::Handle<hh::fnd::Messenger>, __fastcall, CameraService_GetCameraFrame, 0x1400C54A0, hh::game::GameManager* gameMgr, int idx)
 {
 	//assert(gPlayerId != -1);
 	return originalCameraService_GetCameraFrame(gameMgr, (gPlayerId == -1 ? 0 : gPlayerId) * 2 + idx);
 }
 
-static bool isSplitScreen{};
+enum class ScreenMode {
+	NORMAL,
+	SPLIT_HORIZONTAL,
+	SPLIT_VERTICAL,
+};
+
+static ScreenMode screenMode{ ScreenMode::NORMAL };
 
 HOOK(void, __fastcall, CameraBridge_CFL_UnkFunc2, 0x14008C920, app::camera::CameraBridge* self, const csl::math::Matrix34& viewMatrix, const app_cmn::camera::FrustumParameter& frustumParameter) {
 	unsigned int resX, resY;
@@ -220,10 +226,39 @@ HOOK(void, __fastcall, CameraBridge_CFL_UnkFunc2, 0x14008C920, app::camera::Came
 
 	float screenAspectRatio = static_cast<float>(resX) / static_cast<float>(resY);
 
+	switch (screenMode) {
+	case ScreenMode::SPLIT_HORIZONTAL: screenAspectRatio = screenAspectRatio / 2.0f; break;
+	case ScreenMode::SPLIT_VERTICAL: screenAspectRatio = screenAspectRatio * 2.0f; break;
+	}
+
 	self->cameraComponent->SetViewMatrix(viewMatrix);
-	self->cameraComponent->SetPerspectiveProjectionMatrix(frustumParameter.fov, isSplitScreen ? screenAspectRatio / 2.0f : screenAspectRatio, frustumParameter.nearClip, frustumParameter.farClip);
+	self->cameraComponent->SetPerspectiveProjectionMatrix(frustumParameter.fov, screenAspectRatio, frustumParameter.nearClip, frustumParameter.farClip);
 	self->cameraComponent->SetLookAtPos(self->cameraFrame->pose.lookAtPos);
 }
+
+HOOK(void, __fastcall, RenderingEngineNeedle_SetFXParameter, 0x140CECFF0, hh::gfx::RenderingEngineNeedle* self, hh::needle::NeedleFxParameter* parameters, hh::needle::CNameIDObject* renderUnitName) {
+	auto* supportFX = static_cast<hh::needle::SupportFXAll*>(self->GetSupportFX());
+
+	for (auto& unit : supportFX->renderUnits) {
+		unit.PushSceneParamContainer(supportFX);
+		originalRenderingEngineNeedle_SetFXParameter(self, parameters, renderUnitName);
+		unit.PopSceneParamContainer(supportFX);
+	}
+}
+
+
+HOOK(void, __fastcall, RenderingEngineNeedle_SetSceneConfig, 0x140CECB60, hh::gfx::RenderingEngineNeedle* self, hh::needle::NeedleFxSceneConfig* parameters) {
+	auto* supportFX = static_cast<hh::needle::SupportFXAll*>(self->GetSupportFX());
+
+	for (auto& unit : supportFX->renderUnits) {
+		unit.PushSceneParamContainer(supportFX);
+		originalRenderingEngineNeedle_SetSceneConfig(self, parameters);
+		unit.PopSceneParamContainer(supportFX);
+	}
+}
+
+
+
 
 
 app::level::StageData::AttributeFlags charaAttrFlags[] = {
@@ -257,8 +292,34 @@ class KeyEventHandler : public hh::fw::KeyEventHandler, public hh::game::GameMan
 
 				renderManager->implementation->numMainViewports = 2;
 
-				isSplitScreen = true;
+				screenMode = ScreenMode::SPLIT_HORIZONTAL;
 			}
+		}
+		if (keyEventArgs.scanCode == 0x26) {
+			if (auto* gameManager = hh::game::GameManager::GetInstance())
+				if (auto* fxParamMgr = gameManager->GetService<app::gfx::FxParamManager>()) {
+					auto& stageConfig = fxParamMgr->sceneParameters[fxParamMgr->currentSceneParameters]->sceneData->stageConfig;
+					if (auto* camSrv = gameManager->GetService<app::camera::CameraService>()) {
+						camSrv->CreateDefaultCameraFrame(2, 1, 0, stageConfig.camera.zNear, stageConfig.camera.zFar, stageConfig.camera.fovy);
+					}
+				}
+
+			if (auto* renderManager = static_cast<hh::gfx::RenderManager*>(hh::gfnd::RenderManagerBase::GetInstance()))
+				if (auto* gfxCtx = hh::gfnd::GraphicsContext::GetInstance()) {
+					unsigned int resX, resY;
+
+					renderManager->GetResolution(resX, resY);
+
+					float fResX = static_cast<float>(resX);
+					float fResY = static_cast<float>(resY);
+
+					gfxCtx->GetViewportData(0).SetDimensions({ 0.0f, fResY / 2.0f, fResX, fResY / 2.0f, fResX, fResY / 2.0f });
+					gfxCtx->GetViewportData(1).SetDimensions({ 0.0f, 0.0f, fResX, fResY / 2.0f, fResX, fResY / 2.0f });
+
+					renderManager->implementation->numMainViewports = 2;
+
+					screenMode = ScreenMode::SPLIT_VERTICAL;
+				}
 		}
 		if (keyEventArgs.scanCode >= 0x22 && keyEventArgs.scanCode <= 0x25) {
 			if (auto* gameManager = hh::game::GameManager::GetInstance()) {
@@ -269,7 +330,7 @@ class KeyEventHandler : public hh::fw::KeyEventHandler, public hh::game::GameMan
 					app::player::Player::PlayerSetupInfo psi;
 					psi.playerId = 1;
 					psi.characterId = static_cast<app::player::CharacterIdU8>(keyEventArgs.scanCode - 0x22);
-					psi.worldPos.m_Position = levelInfo->GetPlayerInformation(0)->position.value;
+					psi.worldPos.m_Position = levelInfo->GetPlayerInformation(0)->position.value();
 					psi.worldPos.m_Rotation = csl::math::Quaternion::Identity();
 					psi.deadFallTime = fxParamMgr->sceneParameters[fxParamMgr->currentSceneParameters]->sceneData->stageConfig.common.deadFallTime;
 					psi.deadline = fxParamMgr->sceneParameters[fxParamMgr->currentSceneParameters]->sceneData->stageConfig.common.deadline;
@@ -290,7 +351,7 @@ class KeyEventHandler : public hh::fw::KeyEventHandler, public hh::game::GameMan
 
 KeyEventHandler keyEventHandler;
 
-HOOK(uint64_t, __fastcall, GameModeBootInit, 0x14734FB80, app::game::GameMode* self) {
+HOOK(uint64_t, __fastcall, GameModeBootInit, 0x1401AADF0, app::game::GameMode* self) {
 	auto res = originalGameModeBootInit(self);
 
 	auto* moduleAllocator = hh::fnd::MemoryRouter::GetModuleAllocator();
@@ -317,9 +378,9 @@ public:
 	}
 
 	virtual void SetRenderDimensions(const RenderInfo& renderInfo) override {
-		auto& params = renderingPipelineExecContext->globalParameters;
+		//auto& params = renderingPipelineExecContext->globalParameters;
 
-		//float viewportInfo[4] = { cameraId == 0 ? 1.0f : 0.0f, cameraId == 1 ? 1.0f : 0.0f, cameraId == 2 ? 1.0f : 0.0f, cameraId == 3 ? 1.0f : 0.0f };
+		//float viewportInfo[4] = { index == 0 ? 1.0f : 0.0f, index == 1 ? 1.0f : 0.0f, index == 2 ? 1.0f : 0.0f, index == 3 ? 1.0f : 0.0f };
 		//params->SetShaderParameterFloatByName("u_current_viewport_mask", viewportInfo, 1);
 
 		//float screenInfo[4] = { 0.25f, 0.25f, 0.75f, 0.75f };
@@ -329,14 +390,15 @@ public:
 	virtual void LoadRenderParams(const RenderInfo& renderInfo) override {
 		RenderUnit::LoadRenderParams(renderInfo);
 		pipelineInfo->renderParam.viewports[0] = pipelineInfo->renderParam.viewports[index];
+		//pipelineInfo->renderParam.numViewports = 1;
 		//pipelineInfo->cameraId = cameraId;
 	}
 };
 
 static hh::needle::intrusive_ptr<PaneRenderUnit> renderUnit2{};
 
-HOOK(void, __fastcall, RenderingEngineRangers_SetupMainRenderUnit, 0x14F2C0DF0, hh::gfx::RenderingEngineRangers* self) {
-	auto* staticAlloc = reinterpret_cast<csl::fnd::IAllocator*>(0x143CF5268);
+HOOK(void, __fastcall, RenderingEngineRangers_SetupMainRenderUnit, 0x140CEB8B0, hh::gfx::RenderingEngineRangers* self) {
+	auto* staticAlloc = reinterpret_cast<csl::fnd::IAllocator*>(0x143CF55D8);
 
 	auto* renderingPipeline = new hh::needle::RenderingPipelineRangers{ staticAlloc, self->supportFX.modelInstanceRenderer };
 	self->mainRenderingPipeline = renderingPipeline;
@@ -389,25 +451,27 @@ HOOK(void, __fastcall, CachedShadowMapRenderJob_Render, 0x141036290, hh::needle:
 	}
 }
 
-//static hh::needle::SCullGroupSetting cullSettings[maxPlayers][18]{};
-//
-//HOOK(void, __fastcall, WorldRenderingPipeline_Setup, 0x154C029B0, hh::needle::WorldRenderingPipeline* self, hh::needle::WorldRenderingPipeline::SetupInfo& setupInfo) {
-//	setupInfo.renderParameters.cullingGroupSettings = cullSettings[0];
-//	originalWorldRenderingPipeline_Setup(self, setupInfo);
-//}
+static hh::needle::SCullGroupSetting cullSettings[maxPlayers][18]{};
+
+HOOK(void, __fastcall, WorldRenderingPipeline_Setup, 0x1410471D0, hh::needle::WorldRenderingPipeline* self, hh::needle::WorldRenderingPipeline::SetupInfo& setupInfo) {
+	setupInfo.renderParameters.cullingGroupSettings = cullSettings[0];
+	//setupInfo.renderParameters.parameterCount = 2;
+	originalWorldRenderingPipeline_Setup(self, setupInfo);
+}
 
 BOOL WINAPI DllMain(_In_ HINSTANCE hInstance, _In_ DWORD reason, _In_ LPVOID reserved)
 {
 	switch (reason)
 	{
 	case DLL_PROCESS_ATTACH:
-		//// set rendermanager numMainViewports to 2
-		//WRITE_MEMORY(0x14F382288, uint8_t, 2);
+		// set rendermanager numMainViewports to 2
+		WRITE_MEMORY(0x14F219943, uint8_t, 2);
 
 		// load the same viewport settings for all viewports
-		//WRITE_MEMORY(0x14F3822C9, uint8_t, 0x48, 0x89, 0xCA, 0x90);
+		WRITE_MEMORY(0x14F219989, uint8_t, 0x48, 0x89, 0xCA, 0x90);
 
-		WRITE_MEMORY(0x143CFB388, unsigned long, 0);
+		// Use synchronous renderer because my code sucks and it corrupts memory otherwise.
+		WRITE_MEMORY(0x143CFB6F8, unsigned long, 0);
 
 
 		// Force RCAS FSR TAA
@@ -435,17 +499,18 @@ BOOL WINAPI DllMain(_In_ HINSTANCE hInstance, _In_ DWORD reason, _In_ LPVOID res
 
 
 		// don't cap number of viewports in async jobs by global param count
-		//WRITE_MEMORY(0x141048EF4, uint8_t, 0x90, 0x90, 0x90);
+		// WRITE_MEMORY(0x141048EF4, uint8_t, 0x90, 0x90, 0x90);
 
 
 		//for (size_t i = 0; i < maxPlayers; i++)
 		//	memcpy(cullSettings[i], reinterpret_cast<void*>(0x1415F9D80), sizeof(hh::needle::SCullGroupSetting) * 18);
 
 		//INSTALL_HOOK(WorldRenderingPipeline_Setup);
-
 		INSTALL_HOOK(CameraBridge_CFL_UnkFunc2);
 		INSTALL_HOOK(CachedShadowMapRenderJob_Render);
 		INSTALL_HOOK(RenderingEngineRangers_SetupMainRenderUnit);
+		INSTALL_HOOK(RenderingEngineNeedle_SetFXParameter);
+		INSTALL_HOOK(RenderingEngineNeedle_SetSceneConfig);
 		INSTALL_HOOK(LevelInfo_GetPlayerObject);
 		INSTALL_HOOK(LevelInfo_GetPlayerInformation);
 		INSTALL_HOOK(LevelInfo_GetPlayerIdFromPlayerObject);
@@ -470,8 +535,8 @@ BOOL WINAPI DllMain(_In_ HINSTANCE hInstance, _In_ DWORD reason, _In_ LPVOID res
 		INSTALL_HOOK(sub_1400B54C0);
 		INSTALL_HOOK(sub_1400B5580);
 		INSTALL_HOOK(sub_14099DD70);
-		INSTALL_HOOK(sub_1462027E0);
-		INSTALL_HOOK(sub_146210630);
+		INSTALL_HOOK(sub_1400A1160);
+		INSTALL_HOOK(sub_1400A1340);
 		INSTALL_HOOK(sub_14088AC20);
 		INSTALL_HOOK(sub_140886900);
 		INSTALL_HOOK(sub_140888930);
